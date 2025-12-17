@@ -1,3 +1,6 @@
+function isEventsManagerAvailable() {
+    return typeof addTestEventToLog === 'function';
+}
 // Усовершенствованный симулятор данных системы ГЕРМЕС
 class DataSimulator {
     constructor() {
@@ -160,7 +163,22 @@ class DataSimulator {
         
         // Создаем событие о тесте
         this.createEvent(sensor, testType === 'normal' ? 'info' : testType, true);
-        
+        if (isEventsManagerAvailable() && (isTest || level === 'danger' || level === 'warning')) {
+    // Создаем событие для журнала
+    const journalEvent = {
+        id: Date.now(),
+        sensorId: sensor.id,
+        sensorName: sensor.name,
+        zone: sensor.zone,
+        level: level,
+        value: sensor.value,
+        description: event.description,
+        isTest: isTest
+    };
+    
+    // Сохраняем через менеджер событий
+    addTestEventToLog(sensor.id, level, isTest ? 'Система (тест)' : 'Система');
+}
         // Запускаем таймер завершения теста
         setTimeout(() => {
             this.endSensorTest(sensorId);
@@ -396,6 +414,147 @@ function startDataSimulation() {
         dataSimulator = new DataSimulator();
     }
     dataSimulator.startSimulation();
+	
+	// ========== ДОБАВЛЯЕМ В КОНЕЦ КЛАССА DataSimulator (перед закрывающей фигурной скобкой) ==========
+
+    // Сохранение события в журнал
+    saveEventToJournal(simEvent) {
+        try {
+            // Проверяем, доступен ли localStorage
+            if (typeof(Storage) === "undefined") {
+                console.warn('localStorage не поддерживается');
+                return;
+            }
+            
+            // Получаем текущие события из localStorage
+            let journalEvents = JSON.parse(localStorage.getItem('hermes_events')) || [];
+            
+            // Определяем тип события для журнала
+            let eventType;
+            if (simEvent.isTest) {
+                eventType = 'test';
+            } else if (simEvent.level === 'success') {
+                eventType = 'normal';
+            } else {
+                eventType = simEvent.level; // danger, warning, info
+            }
+            
+            // Получаем оператора из localStorage
+            const user = JSON.parse(localStorage.getItem('hermes_user')) || { name: 'Система' };
+            
+            const journalEvent = {
+                id: simEvent.id,
+                timestamp: new Date(),
+                sensor: simEvent.sensorName,
+                zone: simEvent.zone,
+                type: eventType,
+                value: simEvent.value,
+                operator: user.name || 'Система',
+                description: simEvent.description,
+                acknowledged: false,
+                isTest: simEvent.isTest || false
+            };
+            
+            // Добавляем в начало массива
+            journalEvents.unshift(journalEvent);
+            
+            // Ограничиваем количество событий
+            if (journalEvents.length > 1000) {
+                journalEvents = journalEvents.slice(0, 1000);
+            }
+            
+            // Сохраняем обратно в localStorage
+            localStorage.setItem('hermes_events', JSON.stringify(journalEvents));
+            
+            console.log('📝 Событие сохранено в журнал:', journalEvent.description);
+            
+            // Обновляем журнал событий, если он открыт
+            if (typeof window.refreshEventLog === 'function') {
+                window.refreshEventLog();
+            }
+            
+        } catch (error) {
+            console.error('Ошибка при сохранении события в журнал:', error);
+        }
+    }
+    
+    // Обновленная функция createEvent с сохранением в журнал
+    createEvent(sensor, level, isTest = false) {
+        const event = {
+            id: Date.now(),
+            sensorId: sensor.id,
+            sensorName: sensor.name,
+            zone: sensor.zone,
+            level: level,
+            value: sensor.value,
+            timestamp: new Date().toLocaleTimeString(),
+            description: isTest ? 
+                `[ТЕСТ] ${this.getEventDescription(sensor, level)}` :
+                this.getEventDescription(sensor, level),
+            isTest: isTest,
+            acknowledged: false
+        };
+        
+        this.events.unshift(event);
+        
+        // Ограничиваем историю событий
+        if (this.events.length > 100) {
+            this.events = this.events.slice(0, 100);
+        }
+        
+        // СОХРАНЯЕМ В ЖУРНАЛ
+        this.saveEventToJournal(event);
+        
+        // Показываем уведомление только для реальных событий или тестов опасности
+        if (!isTest || level === 'danger') {
+            if (typeof showNotification === 'function') {
+                showNotification(event.description, level);
+            }
+        }
+        
+        // Обновляем счетчик аварий
+        this.updateAlarmCounter();
+        
+        // Обновляем список событий
+        this.updateEventsList();
+    }
+}
+
+// ========== ДОБАВЛЯЕМ ПОСЛЕ КЛАССА DataSimulator ==========
+
+// Глобальная функция для обновления журнала событий
+window.refreshEventLog = function() {
+    // Если открыта страница журнала событий, обновляем ее
+    if (window.location.pathname.includes('event-log.html')) {
+        if (typeof loadEvents === 'function') {
+            loadEvents();
+        }
+    }
+};
+
+// Инициализация симулятора
+let dataSimulator = null;
+
+function startDataSimulation() {
+    if (!dataSimulator) {
+        dataSimulator = new DataSimulator();
+    }
+    dataSimulator.startSimulation();
+}
+
+function stopDataSimulation() {
+    if (dataSimulator) {
+        dataSimulator.stopSimulation();
+    }
+}
+
+// Функция для запуска теста датчика
+function runSensorTest(sensorId, testType, duration) {
+    if (dataSimulator) {
+        return dataSimulator.startSensorTest(sensorId, testType, duration);
+    }
+    return false;
+}
 }
 
 function stopDataSimulation() {
